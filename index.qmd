@@ -24,4 +24,4 @@ My name is Abdullah Ahmad, I am a senior Biology major at UMass Amherst.
 
 <https://ood.unity.rc.umass.edu/rnode/toltec-cpu003.unity.rc.umass.edu/16780/files/html%20files/Lab%207.html>
 
-<a href="./lab13.html" target="_blank" rel="noopener noreferrer">Open Lab 13 — NEON MAG Community Composition, Diversity, and Quality Across Sites</a>
+<https://ood.unity.rc.umass.edu/rnode/cpu001.unity.rc.umass.edu/60481/files/LabS3/lab13.html>
