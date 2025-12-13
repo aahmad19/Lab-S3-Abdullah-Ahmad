@@ -1,5 +1,5 @@
 ---
-title: "Lab S3"
+title: "Lab 13"
 author: "Abdullah Ahmad"
 format:
   html: 
@@ -12,16 +12,256 @@ execute:
   message: false
 ---
 
-## **About Me**
+# **NEON MAG Community Composition, Diversity, and Quality Across Sites**
 
-My name is Abdullah Ahmad, I am a senior Biology major at UMass Amherst.
+This tutorial examines NEON MAGs across sites to summarize MAG richness and its relation to soil pH, taxonomic profiles by site, MAG quality (completeness and contamination), and the proportion of high quality MAGs per sample and site.
 
-## Image
+# **Step 1: Load and Prepare Data**
 
-![Caption](elephant.png)
+```{r}
+library(tidyverse)
+library(lubridate)
+library(DT)
+library(viridis)
+library(janitor)
+library(plotly)
+library(respirometry)
+library(visNetwork)
+library(usethis)
+```
 
-## **Link**
+```{r}
+df <- read_csv("NEON_soilMAGs_soilChem-2.csv")
 
-<https://ood.unity.rc.umass.edu/rnode/toltec-cpu003.unity.rc.umass.edu/16780/files/html%20files/Lab%207.html>
+head(df) 
+```
 
-<https://ood.unity.rc.umass.edu/rnode/cpu001.unity.rc.umass.edu/60481/files/LabS3/lab13.html>
+# **Step 2: MAG Richness per Site and Relation to Soil pH**
+
+**Explanation:** Count MAGs per sample and visualize whether samples with different pH have different numbers of recovered MAGs.
+
+```{r}
+richness <- df |>
+  group_by(genomicsSampleID) |>
+  
+# I am doing mean, just so I can get one value per sample ID, since the pH is the same for all of it anyways.
+  summarise(n_mags = n_distinct(bin_id), 
+            soilInWaterpH = mean(soilInWaterpH, na.rm = TRUE), 
+            .groups = "drop"
+) |>
+  mutate(pH_group = case_when(!is.na(soilInWaterpH) & soilInWaterpH < 5.5 ~ "acidic",
+                              !is.na(soilInWaterpH) ~ "neutral"))
+
+
+head(richness)
+richness |>
+ggplot(aes(x = pH_group, y = n_mags)) +
+  geom_boxplot() + geom_jitter() +
+  labs(
+    x = "pH Group (<5.5 = acidic)",
+    y = "MAG Richness (Distinct bin_id)",
+    title = "MAG Richness per Sample and Relation to Soil pH"
+  )
+
+# Correlation test, 
+cor_test <- cor.test(richness$n_mags, richness$soilInWaterpH, use="complete.obs")
+print(cor_test)
+```
+
+The correlation test shows that MAG richness is negatively correlated with sample pH (r = -0.2719, 95% CI = -0.3748 to -0.1624, n = 293, p = 2.31e-06).
+
+# **Step 3: Taxonomic Profiling by Site**
+
+**Explanation:** Summarize phylum-level composition per site and plot stacked bars.
+
+```{r}
+tax_profile <- df |>
+  group_by(site_ID, phylum) |>
+  summarise(count = n(), .groups = "drop") |>
+  mutate(rel_abundance = count / sum(count))
+
+ggplot(tax_profile, aes(x = site_ID, y = rel_abundance, fill = phylum)) +
+  geom_bar(stat = "identity") +
+  scale_fill_viridis_d(option = "turbo") +
+  theme_minimal() +
+  labs(title = "Taxonomic Profile by Site", y = "Relative Abundance") +
+  theme(axis.text.x = element_text(angle = 60, size = 6, vjust = 1.2, hjust = 1), legend.position = "right")
+```
+
+# **Step 4: MAG Quality vs Soil Chemistry**
+
+**Explanation:** Visualize whether MAG quality/assembly metrics differ across soil gradients.
+
+```{r}
+mag_meta <- df |>
+  select(bin_id, genomicsSampleID, bin_completeness, bin_contamination, gene_count, scaffold_count, site_ID)
+
+sample_env <- df |>
+  distinct(genomicsSampleID, .keep_all = TRUE) |>
+  select(genomicsSampleID, soilInWaterpH, soilMoisture, soilTemp, decimalLatitude, decimalLongitude, site_ID)
+
+mag_env <- mag_meta |>
+  left_join(sample_env, by = "genomicsSampleID")
+
+head(mag_env)
+
+# Distribution graphs
+
+p1 <- ggplot(mag_env, aes(x = bin_completeness)) + 
+  geom_histogram(bins = 40, fill = "cornflowerblue", color = "white") + 
+  theme_minimal() + labs(title = "Distribution of Bin Completeness",
+                         x = "Bin Completeness",
+                         y = "Count")
+
+p2 <- ggplot(mag_env, aes(x = bin_contamination)) + 
+  geom_histogram(bins = 40, fill = "tomato", color = "white") + 
+  theme_minimal() + labs(title = "Distribution of Bin Contamination",
+                         x = "Bin Contamination",
+                         y = "Count")
+
+p3 <- ggplot(mag_env, aes(x = scaffold_count)) + 
+  geom_histogram(bins = 40, fill = "darkgreen", color = "white") + 
+  theme_minimal() + labs(title = "Distribution of Scaffold Count",
+                         x = "Scaffold Count",
+                         y = "Count")
+
+p4 <- ggplot(mag_env, aes(x = gene_count)) + 
+  geom_histogram(bins = 40, fill = "purple", color = "white") + 
+  theme_minimal() + labs(title = "Distribution of Gene Count",
+                         x = "Gene Count",
+                         y = "Count")
+
+print(p1); print(p2); print(p3); print(p4)
+```
+
+### **Bin Completeness vs Soil pH**
+
+```{r}
+library(hexbin)
+
+# Scatter Bin Completeness vs pH with linear fit
+# I used hexbin because it was very hard to read with so many bin ID data points
+
+p_comp_pH <- ggplot(mag_env, aes(x = soilInWaterpH, y = bin_completeness)) +
+  stat_binhex(bins = 20) +
+  scale_fill_viridis_c(option = "plasma", breaks = c(1, 5, 10, 20, 30, 40, 50),
+                       labels = c("1", "5", "10", "20", "30", "40", "50")) +
+  geom_smooth(method = "lm", se = TRUE, color = "white") +
+  geom_point(alpha = 0) +
+  theme_minimal() +
+  labs(x = "pH",
+       y = "Bin Completeness",
+       title = "MAG Completeness vs Sample pH")
+print(p_comp_pH)
+
+# Correlation test for p_comp_pH
+
+df2 <- mag_env %>%
+  filter(!is.na(bin_completeness), !is.na(soilInWaterpH))
+nrow(df2)  # sample size used
+pearson_res <- cor.test(df2$bin_completeness, df2$soilInWaterpH, method = "pearson")
+print(pearson_res)   
+
+# Correlation test results show a weak correlation between bin completeness and soil pH.
+```
+
+### **Bin Contamination vs Soil pH**
+
+```{r}
+p_cont_pH <- ggplot(mag_env, aes(x = soilInWaterpH, y = bin_contamination)) +
+  geom_point(alpha = 0.2, size = 1) +
+
+  stat_binhex(bins = 20) +
+  scale_fill_viridis_c(option = "plasma", breaks = c(5, 10, 20, 30, 40, 50),
+                       labels = c("5", "10", "20", "30", "40", "50")) +
+  geom_smooth(method = "lm", se = TRUE, color = "white") +
+  theme_minimal() +
+  labs(
+    x = "pH",
+    y = "Bin Contamination",
+    title = "MAG Contamination vs Sample pH"
+  ) 
+print(p_cont_pH)
+```
+
+# **Step 5: Proportion of High Quality MAGs per Sample/Site**
+
+**Explanation:** Computing how many high quality MAGs come from each sample or site.
+
+### **Creating the Tables**
+
+```{r}
+# This is to create the datasets for site and sample
+
+num_of_HQ <- df |>
+  mutate(is_HQ = as.integer(bin_quality == "HQ"))
+
+sample_summary <- num_of_HQ |>
+  group_by(genomicsSampleID, site_ID) |>
+  summarise(
+    n_MAGs = n_distinct(bin_id),
+    n_HQ = sum(is_HQ, na.rm = TRUE),
+    prop_HQ = n_HQ / pmax(n_MAGs, 1),
+    med_comp = median(bin_completeness, na.rm = TRUE),
+    med_cont = median(bin_contamination, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+
+site_summary <- sample_summary %>%
+  group_by(site_ID) %>%
+  summarise(
+    n_samples  = n(),
+    total_MAGs = sum(n_MAGs, na.rm = TRUE),
+    total_HQ   = sum(n_HQ, na.rm = TRUE),
+    prop_HQ    = total_HQ / pmax(total_MAGs, 1),
+    .groups = "drop"
+  ) 
+
+head(site_summary)
+head(sample_summary)
+```
+
+### **Proportion of High Quality MAGs per Sample**
+
+**Explanation:** Create an interactive graph to better visualize data, and be able to sort each sample per site because there are so many different samples.
+
+```{r}
+plot_ly(
+  data = sample_summary,
+  x = ~n_MAGs,
+  y = ~prop_HQ,
+  color = ~site_ID,          # one trace per site (automatic grouping)
+  size  = ~n_MAGs,           # size indicates reliability
+  sizes = c(6, 30),         # size range
+  text  = ~paste0(
+    "sample: ", genomicsSampleID,
+    "<br>site: ", site_ID,
+    "<br>n_MAGs: ", n_MAGs,
+    "<br>prop_HQ: ", sprintf("%.3f", prop_HQ)
+  ),
+  hoverinfo = "text",
+  type = "scatter",
+  mode = "markers"
+) |>
+  layout(
+    title = "Proportion of High Quality vs Number of MAGs (Click Legend to Highlight a Site)",
+    xaxis = list(title = "Number of MAGs in Sample"),
+    yaxis = list(title = "Proportion HQ", tickformat = ".0%"),
+    legend = list(itemclick = "toggleothers")  # click a legend item to show that site only
+  )
+```
+
+### **Proportion of High Quality MAGs per Site**
+
+```{r}
+ggplot(site_summary, aes(x = site_ID, y = prop_HQ)) +
+  geom_col(fill = "steelblue2") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, vjust = 1.3, hjust = 1.2)) +
+  labs(
+    x = "Site ID",
+    y = "Proportion of HQ MAGs",
+    title = "Proportion of High Quality MAGs at Each Site"
+       )
+
+```
